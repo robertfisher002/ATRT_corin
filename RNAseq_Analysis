@@ -7,6 +7,9 @@ module load fastqc
 fastqc /projectnb/epigen/ATRT_RNAseq_FASTQ/*/*.fq.gz --extract -o /projectnb/epigen/Robert/ATRT/new_analysis_3_7_24/fastqc
 
 #run trimmomatic to remove adaptor sequences and poor quality reads
+module load trimmomatic
+module load java
+
 # Define the directory containing the subdirectories
 parent_directory="/path/to/parent_directory"
 
