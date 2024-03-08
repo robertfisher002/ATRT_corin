@@ -1,3 +1,5 @@
+#run fastqc to check adaptor contamination and read quality
+
 #!/bin/bash -l
 #$ -pe omp 4
 #$ -P epigen
@@ -7,4 +9,49 @@ module load fastqc
 fastqc /projectnb/epigen/ATRT_RNAseq_FASTQ/*/*.fq.gz --extract -o /projectnb/epigen/Robert/ATRT/new_analysis_3_7_24/fastqc
 
 
+#run STAR aligner with hg38
+
+#!/bin/bash -l
+#$ -pe omp 24
+#$ -P epigen
+
+module load star 
+
+# Set the path to the STAR genome index (you should provide this)
+GENOME_INDEX="/projectnb/epigen/Robert/ATRT/hg38"
+
+# Set the input directory containing sample replicate directories
+INPUT_DIR="/projectnb/epigen/ATRT_RNAseq_FASTQ"
+
+# Set the output directory for BAM files
+OUTPUT_DIR="/projectnb/epigen/Robert/ATRT/BAM"
+
+# Loop through subdirectories (sample replicates)
+for sample_dir in ${INPUT_DIR}/*; do
+  if [ -d "$sample_dir" ]; then
+    # Get the sample replicate name (directory name)
+    sample_name=$(basename "$sample_dir")
+
+    # Find read files in the sample replicate subdirectory
+    read1_file="$(find "$sample_dir" -type f -name "*_1.fq.gz" | head -n 1)"
+    read2_file="$(find "$sample_dir" -type f -name "*_2.fq.gz" | head -n 1)"
+
+    if [ -n "$read1_file" ] && [ -n "$read2_file" ]; then
+      # Run STAR to convert FASTQ to BAM
+      STAR \
+        --runThreadN 4 \
+	--readFilesCommand zcat \
+        --genomeDir $GENOME_INDEX \
+        --readFilesIn $read1_file $read2_file \
+        --outFileNamePrefix ${OUTPUT_DIR}/${sample_name}_ \
+        --outSAMtype BAM SortedByCoordinate
+
+      echo "Converted ${sample_name} to BAM."
+    else
+      echo "ERROR: Read files not found in ${sample_dir}" >&2
+    fi
+  fi
+done
+
+echo "Conversion complete."
 
