@@ -6,33 +6,5 @@
 module load fastqc
 fastqc /projectnb/epigen/ATRT_RNAseq_FASTQ/*/*.fq.gz --extract -o /projectnb/epigen/Robert/ATRT/new_analysis_3_7_24/fastqc
 
-#run trimmomatic to remove adaptor sequences and poor quality reads
-module load trimmomatic
-module load java
 
-# Define the directory containing the subdirectories
-parent_directory="/projectnb/epigen/ATRT_RNAseq_FASTQ"
 
-# Iterate over subdirectories
-for subdir in "$parent_directory"/*/; do
-    echo "Processing files in directory: $subdir"
-    
-    # Extract sample name from subdirectory
-    sample_name=$(basename "$subdir")
-
-    # Define input and output file paths
-    input_forward="$subdir/${sample_name}_1.fq.gz"
-    input_reverse="$subdir/${sample_name}_2.fq.gz"
-    output_forward_paired="$subdir/${sample_name}_output_forward_paired.fq.gz"
-    output_forward_unpaired="$subdir/${sample_name}_output_forward_unpaired.fq.gz"
-    output_reverse_paired="$subdir/${sample_name}_output_reverse_paired.fq.gz"
-    output_reverse_unpaired="$subdir/${sample_name}_output_reverse_unpaired.fq.gz"
-
-    # Run Trimmomatic command
-    java -jar trimmomatic-0.39.jar PE \
-        "$input_forward" "$input_reverse" \
-        "$output_forward_paired" "$output_forward_unpaired" \
-        "$output_reverse_paired" "$output_reverse_unpaired" \
-        ILLUMINACLIP:TruSeq3-PE.fa:2:30:10:2:True \
-        LEADING:3 TRAILING:3 MINLEN:36
-done
