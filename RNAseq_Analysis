@@ -81,3 +81,8 @@ for bam_file in "$bam_directory"/*_Aligned.sortedByCoord.out.bam; do
     # Run featureCounts
     featureCounts -a "$annotation_file" -o "$output_directory/${filename_no_ext}_counts.txt" --largestOverlap -t exon -g gene_id -p --countReadPairs -Q 10 "$bam_file"
 done
+
+
+#merge BT37 count matrices together and do the same for CHLA06
+
+
