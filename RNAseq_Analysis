@@ -56,7 +56,8 @@ done
 echo "Conversion complete."
 
 
-#Run feature counts
+
+#Run feature counts BT37
 #!/bin/bash -l
 #$ -pe omp 4
 #$ -P epigen
@@ -72,17 +73,30 @@ annotation_file="/projectnb/epigen/Robert/hg38/gencode.v44.annotation.gtf"
 # Output directory for featureCounts results
 output_directory="/projectnb/epigen/Robert/ATRT/Counts"
 
-# Loop through each .bam file in the directory
-for bam_file in "$bam_directory"/*_Aligned.sortedByCoord.out.bam; do
-    # Extract filename without extension and remove the tail
-    filename=$(basename -- "$bam_file")
-    filename_no_ext="${filename%_Aligned.sortedByCoord.out.bam}"
-    
-    # Run featureCounts
-    featureCounts -a "$annotation_file" -o "$output_directory/${filename_no_ext}_counts.txt" --largestOverlap -t exon -g gene_id -p --countReadPairs -Q 10 "$bam_file"
-done
+featureCounts -a "$annotation_file" -o "$output_directory/BT37_counts.txt" --largestOverlap -t exon -g gene_id -p --countReadPairs -Q 10 "$bam_directory"/BT37_D_D1_1_Aligned.sortedByCoord.out.bam "$bam_directory"/BT37_D_D1_2_Aligned.sortedByCoord.out.bam "$bam_directory"/BT37_D_D1_3_Aligned.sortedByCoord.out.bam "$bam_directory"/BT37_C_D1_1_Aligned.sortedByCoord.out.bam "$bam_directory"/BT37_C_D1_2_Aligned.sortedByCoord.out.bam "$bam_directory"/BT37_C_D1_3_Aligned.sortedByCoord.out.bam 
 
 
-#merge BT37 count matrices together and do the same for CHLA06
+#Run feature counts CHLA06
+#!/bin/bash -l
+#$ -pe omp 4
+#$ -P epigen
+
+module load subread
+
+# Directory containing .bam files
+bam_directory="/projectnb/epigen/Robert/ATRT/BAM"
+
+# Full path to annotation file
+annotation_file="/projectnb/epigen/Robert/hg38/gencode.v44.annotation.gtf"
+
+# Output directory for featureCounts results
+output_directory="/projectnb/epigen/Robert/ATRT/Counts"
+
+featureCounts -a "$annotation_file" -o "$output_directory/CHO6_counts.txt" --largestOverlap -t exon -g gene_id -p --countReadPairs -Q 10 "$bam_directory"/CHO6_D_D1_1_Aligned.sortedByCoord.out.bam "$bam_directory"/CHO6_D_D1_2_Aligned.sortedByCoord.out.bam "$bam_directory"/CHO6_D_D1_3_Aligned.sortedByCoord.out.bam "$bam_directory"/CHO6_C_D1_1_Aligned.sortedByCoord.out.bam "$bam_directory"/CHO6_C_D1_2_Aligned.sortedByCoord.out.bam "$bam_directory"/CHO6_C_D1_3_Aligned.sortedByCoord.out.bam 
+
+
+
+
+
 
 
