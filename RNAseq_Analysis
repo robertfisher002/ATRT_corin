@@ -57,9 +57,11 @@ echo "Conversion complete."
 
 
 #Run feature counts
-#!/bin/bash
+#!/bin/bash -l
 #$ -pe omp 4
 #$ -P epigen
+
+module load subread
 
 # Directory containing .bam files
 bam_directory="/projectnb/epigen/Robert/ATRT/BAM"
@@ -77,5 +79,5 @@ for bam_file in "$bam_directory"/*_Aligned.sortedByCoord.out.bam; do
     filename_no_ext="${filename%_Aligned.sortedByCoord.out.bam}"
     
     # Run featureCounts
-    featureCounts -a "$annotation_file" -o "$output_directory/${filename_no_ext}_counts.txt" --largestOverlap -t exon -g gene_id "$bam_file"
+    featureCounts -a "$annotation_file" -o "$output_directory/${filename_no_ext}_counts.txt" --largestOverlap -t exon -g gene_id -p --countReadPairs -Q 10 "$bam_file"
 done
