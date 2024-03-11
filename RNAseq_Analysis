@@ -18,7 +18,7 @@ fastqc /projectnb/epigen/ATRT_RNAseq_FASTQ/*/*.fq.gz --extract -o /projectnb/epi
 module load star 
 
 # Set the path to the STAR genome index (you should provide this)
-GENOME_INDEX="/projectnb/epigen/Robert/ATRT/hg38"
+GENOME_INDEX="/projectnb/epigen/Robert/hg38"
 
 # Set the input directory containing sample replicate directories
 INPUT_DIR="/projectnb/epigen/ATRT_RNAseq_FASTQ"
@@ -55,3 +55,27 @@ done
 
 echo "Conversion complete."
 
+
+#Run feature counts
+#!/bin/bash
+#$ -pe omp 4
+#$ -P epigen
+
+# Directory containing .bam files
+bam_directory="/projectnb/epigen/Robert/ATRT/BAM"
+
+# Full path to annotation file
+annotation_file="/projectnb/epigen/Robert/hg38/gencode.v44.annotation.gtf"
+
+# Output directory for featureCounts results
+output_directory="/projectnb/epigen/Robert/ATRT/Counts"
+
+# Loop through each .bam file in the directory
+for bam_file in "$bam_directory"/*_Aligned.sortedByCoord.out.bam; do
+    # Extract filename without extension and remove the tail
+    filename=$(basename -- "$bam_file")
+    filename_no_ext="${filename%_Aligned.sortedByCoord.out.bam}"
+    
+    # Run featureCounts
+    featureCounts -a "$annotation_file" -o "$output_directory/${filename_no_ext}_counts.txt" --largestOverlap -t exon -g gene_id "$bam_file"
+done
