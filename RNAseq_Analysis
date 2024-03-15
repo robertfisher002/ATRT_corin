@@ -97,6 +97,49 @@ featureCounts -a "$annotation_file" -o "$output_directory/CHO6_counts.txt" --lar
 
 
 
+#Run DESeq
+
+#import in featurecounts 
+BT37_counts <- read.delim("/projectnb/epigen/Robert/ATRT/Counts/BT37_counts.txt", header =F, stringsAsFactors=FALSE)
+
+#remove first row and make the next row the column names
+BT37_counts <- BT37_counts[-1,]
+colnames(BT37_counts) <- BT37_counts[1,]
+BT37_counts <- BT37_counts[-1,]
+
+#simplify column names and order them 
+BT37_counts <- BT37_counts %>% dplyr::rename(BT37_DMSO_1 = "/projectnb/epigen/Robert/ATRT/BAM/BT37_D_D1_1_Aligned.sortedByCoord.out.bam", BT37_DMSO_2 = "/projectnb/epigen/Robert/ATRT/BAM/BT37_D_D1_2_Aligned.sortedByCoord.out.bam", BT37_DMSO_3 = "/projectnb/epigen/Robert/ATRT/BAM/BT37_D_D1_3_Aligned.sortedByCoord.out.bam", BT37_Corin_1 = "/projectnb/epigen/Robert/ATRT/BAM/BT37_C_D1_1_Aligned.sortedByCoord.out.bam", BT37_Corin_2 = "/projectnb/epigen/Robert/ATRT/BAM/BT37_C_D1_2_Aligned.sortedByCoord.out.bam", BT37_Corin_3 = "/projectnb/epigen/Robert/ATRT/BAM/BT37_C_D1_3_Aligned.sortedByCoord.out.bam") %>% dplyr::select(Geneid,BT37_DMSO_1,BT37_DMSO_2,BT37_DMSO_3, BT37_Corin_1,BT37_Corin_2, BT37_Corin_3) %>% textshape::column_to_rownames("Geneid")
+
+#convert to matrix
+BT37_counts_DESeq<- data.matrix(BT37_counts)
+
+#make conditions table input for DESeq
+sample_ID <- c("BT37_DMSO_1", "BT37_DMSO_2", "BT37_DMSO_3", "BT37_Corin_1", "BT37_Corin_2", "BT37_Corin_3")
+condition <- c("DMSO", "DMSO", "DMSO", "Corin", "Corin", "Corin")
+type <- c("paired", "paired", "paired", "paired", "paired", "paired")
+BT37_conditions <- data.frame(sample_ID = sample_ID, condition = condition, type = type)
+rownames(BT37_conditions) <- BT37_conditions[,1]
+BT37_conditions <- BT37_conditions[,-1]
+
+#Ensure rownames of conditions match order of column names of count matrix
+all(rownames(BT37_conditions) == colnames(BT37_counts))
+
+#Set up DEseq matrix with design set to compare between DMSO and corin
+dds_BT37 = DESeqDataSetFromMatrix(BT37_counts_DESeq, BT37_conditions, design = ~ condition)
+
+#Filter out genes that have low read counts (although not a necessary step for DESeq, running without doing so results in many pseudogenes and ncRNAs that have 1 read count in some samples and thosuands in others)
+dds_BT37 <- estimateSizeFactors(dds_BT37)
+idx_BT37 <- rowSums( counts(dds_BT37, normalized=TRUE) >= 5 ) >= 6
+dds_BT37 <- dds_BT37[idx_BT37,]
+
+#Run DESeq
+dds_BT37 <- DESeq(dds_BT37)
+
+#Get results
+res_BT37 <- results(dds_BT37, contrast=c("condition","Corin","DMSO"))
+
+
+
 
 
 
