@@ -9,22 +9,23 @@ module load fastqc
 fastqc /projectnb/epigen/ATRT_RNAseq_FASTQ/*/*.fq.gz --extract -o /projectnb/epigen/Robert/ATRT/new_analysis_3_7_24/fastqc
 
 
-#run STAR aligner with hg38
+
+#run salmon for transcript quantification
 
 #!/bin/bash -l
 #$ -pe omp 24
 #$ -P epigen
 
-module load star 
+module load salmon
 
-# Set the path to the STAR genome index (you should provide this)
-GENOME_INDEX="/projectnb/epigen/Robert/hg38"
+# Set the path to the Salmon index 
+SALMON_INDEX="/projectnb/epigen/Robert/ATRT/salmon/hg38_index"
 
 # Set the input directory containing sample replicate directories
 INPUT_DIR="/projectnb/epigen/ATRT_RNAseq_FASTQ"
 
-# Set the output directory for BAM files
-OUTPUT_DIR="/projectnb/epigen/Robert/ATRT/BAM"
+# Set the output directory for Salmon quantification results
+OUTPUT_DIR="/projectnb/epigen/Robert/ATRT/salmon/quant"
 
 # Loop through subdirectories (sample replicates)
 for sample_dir in ${INPUT_DIR}/*; do
@@ -37,108 +38,1114 @@ for sample_dir in ${INPUT_DIR}/*; do
     read2_file="$(find "$sample_dir" -type f -name "*_2.fq.gz" | head -n 1)"
 
     if [ -n "$read1_file" ] && [ -n "$read2_file" ]; then
-      # Run STAR to convert FASTQ to BAM
-      STAR \
-        --runThreadN 4 \
-	--readFilesCommand zcat \
-        --genomeDir $GENOME_INDEX \
-        --readFilesIn $read1_file $read2_file \
-        --outFileNamePrefix ${OUTPUT_DIR}/${sample_name}_ \
-        --outSAMtype BAM SortedByCoordinate
+      # Run Salmon to quantify expression
+      salmon quant -i $SALMON_INDEX -l A \
+                   -1 $read1_file \
+                   -2 $read2_file \
+                   -p 8 --validateMappings \
+                   -o ${OUTPUT_DIR}/${sample_name}_quant
 
-      echo "Converted ${sample_name} to BAM."
+      echo "Processed ${sample_name} with Salmon."
     else
       echo "ERROR: Read files not found in ${sample_dir}" >&2
     fi
   fi
 done
 
-echo "Conversion complete."
 
+#DESeq differential analysis and processing
 
+---
+title: "R Notebook"
+output: html_notebook
+---
 
-#Run feature counts BT37
-#!/bin/bash -l
-#$ -pe omp 4
-#$ -P epigen
-
-module load subread
-
-# Directory containing .bam files
-bam_directory="/projectnb/epigen/Robert/ATRT/BAM"
-
-# Full path to annotation file
-annotation_file="/projectnb/epigen/Robert/hg38/gencode.v44.annotation.gtf"
-
-# Output directory for featureCounts results
-output_directory="/projectnb/epigen/Robert/ATRT/Counts"
-
-featureCounts -a "$annotation_file" -o "$output_directory/BT37_counts.txt" --largestOverlap -t exon -g gene_id -p --countReadPairs -Q 10 "$bam_directory"/BT37_D_D1_1_Aligned.sortedByCoord.out.bam "$bam_directory"/BT37_D_D1_2_Aligned.sortedByCoord.out.bam "$bam_directory"/BT37_D_D1_3_Aligned.sortedByCoord.out.bam "$bam_directory"/BT37_C_D1_1_Aligned.sortedByCoord.out.bam "$bam_directory"/BT37_C_D1_2_Aligned.sortedByCoord.out.bam "$bam_directory"/BT37_C_D1_3_Aligned.sortedByCoord.out.bam 
-
-
-#Run feature counts CHLA06
-#!/bin/bash -l
-#$ -pe omp 4
-#$ -P epigen
-
-module load subread
-
-# Directory containing .bam files
-bam_directory="/projectnb/epigen/Robert/ATRT/BAM"
-
-# Full path to annotation file
-annotation_file="/projectnb/epigen/Robert/hg38/gencode.v44.annotation.gtf"
-
-# Output directory for featureCounts results
-output_directory="/projectnb/epigen/Robert/ATRT/Counts"
-
-featureCounts -a "$annotation_file" -o "$output_directory/CHO6_counts.txt" --largestOverlap -t exon -g gene_id -p --countReadPairs -Q 10 "$bam_directory"/CHO6_D_D1_1_Aligned.sortedByCoord.out.bam "$bam_directory"/CHO6_D_D1_2_Aligned.sortedByCoord.out.bam "$bam_directory"/CHO6_D_D1_3_Aligned.sortedByCoord.out.bam "$bam_directory"/CHO6_C_D1_1_Aligned.sortedByCoord.out.bam "$bam_directory"/CHO6_C_D1_2_Aligned.sortedByCoord.out.bam "$bam_directory"/CHO6_C_D1_3_Aligned.sortedByCoord.out.bam 
+```{r}
+library(dplyr)
+library(tidyverse)
+library(ComplexHeatmap)
+library(circlize)
+library(DESeq2)
+library(textshape)
+```
 
 
 
 
-#Run DESeq
+#Use Salmon
 
-#import in featurecounts 
-BT37_counts <- read.delim("/projectnb/epigen/Robert/ATRT/Counts/BT37_counts.txt", header =F, stringsAsFactors=FALSE)
+```{r}
+#BiocManager::install("tximport")
+library(tximport)
+library(GenomicFeatures)
+library(DESeq2)
 
-#remove first row and make the next row the column names
-BT37_counts <- BT37_counts[-1,]
-colnames(BT37_counts) <- BT37_counts[1,]
-BT37_counts <- BT37_counts[-1,]
+setwd("/projectnb/epigen/Robert/ATRT/salmon")
+gtf <- "gencode.v45.annotation.gtf"
+txdb <- makeTxDbFromGFF(gtf)
 
-#simplify column names and order them 
-BT37_counts <- BT37_counts %>% dplyr::rename(BT37_DMSO_1 = "/projectnb/epigen/Robert/ATRT/BAM/BT37_D_D1_1_Aligned.sortedByCoord.out.bam", BT37_DMSO_2 = "/projectnb/epigen/Robert/ATRT/BAM/BT37_D_D1_2_Aligned.sortedByCoord.out.bam", BT37_DMSO_3 = "/projectnb/epigen/Robert/ATRT/BAM/BT37_D_D1_3_Aligned.sortedByCoord.out.bam", BT37_Corin_1 = "/projectnb/epigen/Robert/ATRT/BAM/BT37_C_D1_1_Aligned.sortedByCoord.out.bam", BT37_Corin_2 = "/projectnb/epigen/Robert/ATRT/BAM/BT37_C_D1_2_Aligned.sortedByCoord.out.bam", BT37_Corin_3 = "/projectnb/epigen/Robert/ATRT/BAM/BT37_C_D1_3_Aligned.sortedByCoord.out.bam") %>% dplyr::select(Geneid,BT37_DMSO_1,BT37_DMSO_2,BT37_DMSO_3, BT37_Corin_1,BT37_Corin_2, BT37_Corin_3) %>% textshape::column_to_rownames("Geneid")
+k <- keys(txdb, keytype = "TXNAME")
+tx2gene <- select(txdb, k, "GENEID", "TXNAME")
 
-#convert to matrix
-BT37_counts_DESeq<- data.matrix(BT37_counts)
+setwd("/projectnb/epigen/Robert/ATRT/salmon")
 
-#make conditions table input for DESeq
-sample_ID <- c("BT37_DMSO_1", "BT37_DMSO_2", "BT37_DMSO_3", "BT37_Corin_1", "BT37_Corin_2", "BT37_Corin_3")
-condition <- c("DMSO", "DMSO", "DMSO", "Corin", "Corin", "Corin")
-type <- c("paired", "paired", "paired", "paired", "paired", "paired")
-BT37_conditions <- data.frame(sample_ID = sample_ID, condition = condition, type = type)
-rownames(BT37_conditions) <- BT37_conditions[,1]
-BT37_conditions <- BT37_conditions[,-1]
+# Create the data frame for samples
+samples_BT37 <- data.frame(
+  Cell = rep("BT37", 6),
+  Treatment = c(rep("DMSO", 3), rep("Corin", 3)),
+  Run = c(
+    "BT37_D_D1_1_quant", "BT37_D_D1_2_quant", "BT37_D_D1_3_quant",
+    "BT37_C_D1_1_quant", "BT37_C_D1_2_quant", "BT37_C_D1_3_quant"
+  )
+)
 
-#Ensure rownames of conditions match order of column names of count matrix
-all(rownames(BT37_conditions) == colnames(BT37_counts))
+# Write the data frame to a tab-delimited text file
+write.table(samples_BT37, file = "samples_BT37.txt", sep = "\t", quote = FALSE, row.names = FALSE)
 
-#Set up DEseq matrix with design set to compare between DMSO and corin
-dds_BT37 = DESeqDataSetFromMatrix(BT37_counts_DESeq, BT37_conditions, design = ~ condition)
 
-#Filter out genes that have low read counts (although not a necessary step for DESeq, running without doing so results in many pseudogenes and ncRNAs that have 1 read count in some samples and thosuands in others)
+# Define your directory
+dir <- "quant"
+
+# Create a vector of file paths to quant.sf.gz files
+files <- file.path(dir, "BT37", samples_BT37$Run, "quant.sf")
+
+# Rename the files with sample IDs
+names(files) <- paste0(samples_BT37$Run)
+
+# Check if all files exist
+all(file.exists(files))
+
+# Import the files using tximport
+txi <- tximport(files, type = "salmon", tx2gene = tx2gene)
+
+#Set up DESeq object
+dds_BT37 <- DESeqDataSetFromTximport(txi, samples_BT37, ~Treatment)
+
+#filter low counts
 dds_BT37 <- estimateSizeFactors(dds_BT37)
-idx_BT37 <- rowSums( counts(dds_BT37, normalized=TRUE) >= 5 ) >= 6
-dds_BT37 <- dds_BT37[idx_BT37,]
+idx<- rowSums( counts(dds_BT37, normalized=TRUE) >= 5 ) >= 6
+dds_BT37 <- dds_BT37[idx,]
 
 #Run DESeq
 dds_BT37 <- DESeq(dds_BT37)
 
-#Get results
-res_BT37 <- results(dds_BT37, contrast=c("condition","Corin","DMSO"))
+#Result
+res_BT37 <- results(dds_BT37, contrast=c("Treatment","Corin","DMSO"))
+```
 
 
+```{r}
+#plot PCA
+vsd_BT37 <- vst(dds_BT37, blind=FALSE)
+plotPCA(vsd_BT37, intgroup=c("Treatment"))
+
+```
+
+```{r}
+sampleDists <- dist(t(assay(vsd_BT37)))
+
+library(RColorBrewer)
+library(pheatmap)
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- paste(vsd_BT37$Treatment, sep="-")
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+
+```{r}
+setwd("/projectnb/epigen/Robert/ATRT/salmon")
+
+# Create the data frame for samples
+samples <- data.frame(
+  Cell = rep("CHO6", 6),
+  Treatment = c(rep("DMSO", 3), rep("Corin", 3)),
+  Run = c(
+    "CHO6_D_D1_1_quant", "CHO6_D_D1_2_quant", "CHO6_D_D1_3_quant",
+    "CHO6_C_D1_1_quant", "CHO6_C_D1_2_quant", "CHO6_C_D1_3_quant"
+  )
+)
+
+# Write the data frame to a tab-delimited text file
+write.table(samples, file = "samples.txt", sep = "\t", quote = FALSE, row.names = FALSE)
+
+
+# Define your directory
+dir <- "quant"
+
+# Create a vector of file paths to quant.sf.gz files
+files <- file.path(dir, "CHO6", samples$Run, "quant.sf")
+
+# Rename the files with sample IDs
+names(files) <- paste0(samples$Run)
+
+# Check if all files exist
+all(file.exists(files))
+
+# Import the files using tximport
+txi <- tximport(files, type = "salmon", tx2gene = tx2gene)
+
+#Set up DESeq object
+dds_CHO6 <- DESeqDataSetFromTximport(txi, samples, ~Treatment)
+
+#filter low counts
+dds_CHO6 <- estimateSizeFactors(dds_CHO6)
+idx<- rowSums( counts(dds_CHO6, normalized=TRUE) >= 5 ) >= 6
+dds_CHO6 <- dds_CHO6[idx,]
+
+#Run DESeq
+dds_CHO6 <- DESeq(dds_CHO6)
+
+#Result
+res_CHO6 <- results(dds_CHO6, contrast=c("Treatment","Corin","DMSO"))
+```
+
+```{r}
+#plot PCA
+vsd_CHO6 <- vst(dds_CHO6, blind=FALSE)
+plotPCA(vsd_CHO6, intgroup=c("Treatment"))
+
+```
+
+```{r}
+sampleDists <- dist(t(assay(vsd_CHO6)))
+
+library(RColorBrewer)
+library(pheatmap)
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- paste(vsd_CHO6$Treatment, sep="-")
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+```
+
+#Process differential results
+```{r}
+resSig_padj_BT37 <- subset(res_BT37, padj < 0.05)
+#resSig_BT37 <- subset(resSig_padj_BT37, log2FoldChange <= -2 | log2FoldChange >= 2 )
+```
+
+```{r}
+resSig_padj_CHO6 <- subset(res_CHO6, padj < 0.05)
+#resSig_CHO6 <- subset(resSig_padj_CHO6, log2FoldChange <= -2 | log2FoldChange >= 2 )
+```
+
+```{r}
+CHO6_DEG <- as.data.frame(resSig_padj_CHO6)
+BT37_DEG <- as.data.frame(resSig_padj_BT37)
+```
+
+
+```{r}
+#mat_BT37 <- counts(dds_BT37, normalized =T)[rownames(BT37_DEG),]
+mat_BT37 <- assay(vsd_BT37)[rownames(BT37_DEG),]
+
+mat_BT37.z <- t(apply(mat_BT37,1, scale))
+colnames(mat_BT37.z) <- c("DMSO_1", "DMSO_2", "DMSO_3","Corin_1", "Corin_2", "Corin_3")
+mat_BT37.z
+```
+```{r}
+Heatmap(mat_BT37.z, 
+         cluster_rows = T,
+         cluster_columns = F,
+        name = "Z-score",
+        show_row_names = F,
+        border = T)
+```
+
+
+```{r}
+#mat_CHO6 <- counts(dds_CHO6, normalized =T)[rownames(CHO6_DEG),]
+mat_CHO6 <- assay(vsd_CHO6)[rownames(CHO6_DEG),]
+
+mat_CHO6.z <- t(apply(mat_CHO6,1, scale))
+colnames(mat_CHO6.z) <- c("DMSO_1", "DMSO_2", "DMSO_3","Corin_1", "Corin_2", "Corin_3")
+mat_CHO6.z
+```
+```{r}
+Heatmap(mat_CHO6.z, 
+         cluster_rows = T,
+         cluster_columns = F,
+        name = "Z-score",
+        row_km= 2,
+        show_row_names = F,
+        border = T)
+```
+
+```{r}
+library(tibble)
+```
+
+```{r}
+df_mat_BT37 <- as.data.frame(mat_BT37)
+df_mat_BT37 <- tibble::rownames_to_column(df_mat_BT37, var = "Ensembl")
+
+df_mat_CHO6 <- as.data.frame(mat_CHO6)
+df_mat_CHO6 <- tibble::rownames_to_column(df_mat_CHO6, var = "Ensembl")
+
+df_mat <- full_join(df_mat_BT37, df_mat_CHO6, by = "Ensembl")
+df_mat <- df_mat[,-1]
+df_mat[is.na(df_mat)] <- 0
+df_mat <- as.matrix(df_mat)
+
+df_mat <- t(apply(df_mat,1, scale))
+colnames(df_mat) <- c("BT37_DMSO_1", "BT37_DMSO_2", "BT37_DMSO_3","BT37_Corin_1", "BT37_Corin_2", "BT37_Corin_3", "CHLA06_DMSO_1", "CHLA06_DMSO_2", "CHLA06_DMSO_3","CHLA06_Corin_1", "CHLA06_Corin_2", "CHLA06_Corin_3")
+
+```
+
+```{r}
+col_fun <- colorRamp2(c(-1.5, 0, 3.2), c("blue", "white", "red"))
+
+kmean_heatmap <- Heatmap(df_mat, 
+         cluster_rows = T,
+         cluster_columns = F,
+        name = "Z-score",
+        row_km= 6,
+        col = col_fun,
+        show_row_names = F,
+        border = T)
+kmean_heatmap
+```
+```{r}
+pdf(file="kmean_heatmap.pdf", width = 3, height = 6)
+kmean_heatmap
+dev.off()
+```
+
+
+
+
+```{r}
+# Assuming mat_BT37 and mat_CHO6 are your initial matrices
+df_mat_BT37 <- as.data.frame(mat_BT37)
+df_mat_BT37 <- tibble::rownames_to_column(df_mat_BT37, var = "Ensembl")
+
+df_mat_CHO6 <- as.data.frame(mat_CHO6)
+df_mat_CHO6 <- tibble::rownames_to_column(df_mat_CHO6, var = "Ensembl")
+
+df_mat <- full_join(df_mat_BT37, df_mat_CHO6, by = "Ensembl")
+colnames(df_mat) <- c("Ensembl", "BT37_DMSO_1", "BT37_DMSO_2", "BT37_DMSO_3",
+                      "BT37_Corin_1", "BT37_Corin_2", "BT37_Corin_3",
+                      "CHLA06_DMSO_1", "CHLA06_DMSO_2", "CHLA06_DMSO_3",
+                      "CHLA06_Corin_1", "CHLA06_Corin_2", "CHLA06_Corin_3")
+df_mat[is.na(df_mat)] <- 0
+
+# Define the z-score function
+zscore_rows <- function(x) {
+    t(apply(x, 1, function(row) scale(row)))
+}
+
+# Extract the numeric data for z-scoring
+numeric_data <- df_mat[,-1]
+
+# Apply the z-score function
+zscored_data <- zscore_rows(numeric_data)
+
+# Combine the Ensembl column with the z-scored data
+zscored_df <- cbind(df_mat[,1, drop=FALSE], zscored_data)
+
+```
+
+```{r}
+write.csv(zscored_df, "zscored_df.csv")
+```
+
+
+
+
+
+
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+```
+
+```{r}
+# Convert row names to a column
+CHO6_DEG_log2FC <- CHO6_DEG %>% rownames_to_column("Geneid") %>% dplyr::rename(CHO6_Log2FC = log2FoldChange) %>% dplyr::select(Geneid,CHO6_Log2FC )
+BT37_DEG_log2FC <- BT37_DEG %>% rownames_to_column("Geneid") %>% dplyr::rename(BT37_Log2FC = log2FoldChange) %>% dplyr::select(Geneid,BT37_Log2FC )
+
+# Perform inner join based on row names
+ATRT_DEG <- inner_join(CHO6_DEG_log2FC, BT37_DEG_log2FC, by = "Geneid")
+```
+
+```{r}
+CHO6_DEG <- as.data.frame(res_CHO6)
+CHO6_DEG <- na.omit(CHO6_DEG)
+BT37_DEG <- as.data.frame(res_BT37)
+BT37_DEG <- na.omit(BT37_DEG)
+```
+
+```{r}
+# Define the specific genes to label
+highlight_genes <- c("MAP2", "SYP", "RFPL4B", "CHD5", "NCAN", "TUBB3")
+
+# Modify the data to include only the rows with these specific genes for labeling
+BT37_DEG$label <- ifelse(BT37_DEG$geneSymbol %in% highlight_genes, BT37_DEG$geneSymbol, "")
+
+volcano_BT37 <- ggplot(BT37_DEG, aes(x = log2FoldChange, y = -log10(padj))) +
+  geom_point(aes(color = ifelse(padj < 0.05 & abs(log2FoldChange) > 2, 
+                                ifelse(log2FoldChange > 2, "blue", "grey"), 
+                                "red")), size = 1) +
+  scale_color_manual(values = c("red", "blue", "grey"), guide = "none") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey") +
+  geom_vline(xintercept = c(-2, 2), linetype = "dashed", color = "grey") +
+  geom_label_repel(aes(label = label), 
+                   box.padding =0,
+                   point.padding = 0.5,
+                   segment.color = 'grey50',
+                   max.overlaps = Inf,
+                   force = 0.5,
+                   nudge_y = 0.25) +
+  labs(title = "BT37 DEGs", x = "Log2FC", y = "-Log10(padj)") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+volcano_BT37
+
+
+```
+```{r}
+pdf(file="volcano_BT37.pdf", width = 5, height = 4)
+volcano_BT37
+dev.off()
+```
+
+```{r}
+# Create volcano plot
+highlight_genes <- c("MAP2", "SYP", "RFPL4B", "CHD5", "NCAN", "TUBB3")
+
+# Modify the data to include only the rows with these specific genes for labeling
+CHO6_DEG$label <- ifelse(CHO6_DEG$geneSymbol %in% highlight_genes, CHO6_DEG$geneSymbol, "")
+
+volcano_CHO6 <- ggplot(CHO6_DEG, aes(x = log2FoldChange, y = -log10(padj))) +
+  geom_point(aes(color = ifelse(padj < 0.05 & abs(log2FoldChange) > 2, 
+                                ifelse(log2FoldChange > 2, "blue", "grey"), 
+                                "red")), size = 1) +
+  scale_color_manual(values = c("red", "blue", "grey"), guide = "none") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey") +
+  geom_vline(xintercept = c(-2, 2), linetype = "dashed", color = "grey") +
+  geom_label_repel(aes(label = label), 
+                   box.padding = 0.5,
+                   point.padding = 1,
+                   segment.color = 'grey50',
+                   max.overlaps = Inf) +
+  labs(title = "CHO6 DEGs", x = "Log2FC", y = "-Log10(padj)") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+volcano_CHO6
+```
+```{r}
+pdf(file="volcano_CHO6.pdf", width = 5, height = 4)
+volcano_CHO6
+dev.off()
+```
+
+```{r}
+# Install and load the biomaRt package
+#install.packages("biomaRt")
+library(biomaRt)
+```
+
+#add gene symbol
+```{r}
+# Connect to the Ensembl database
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+```
+
+```{r}
+BT37_DEG$Ensembl <- rownames(BT37_DEG)
+BT37_DEG$Ensembl <- sub("\\..*", "", BT37_DEG$Ensembl)
+
+# Extract Ensembl IDs from row names of your data frame
+ensembl_ids <- BT37_DEG$Ensembl
+
+# Get gene symbols for Ensembl IDs
+gene_symbols <- getBM(attributes = c("ensembl_gene_id", "external_gene_name"),
+                      filters = "ensembl_gene_id", 
+                      values = ensembl_ids, 
+                      mart = ensembl)
+
+# Rename columns for clarity
+colnames(gene_symbols) <- c("ensembl_gene_id", "geneSymbol")
+
+# Merge gene symbols with original data
+BT37_DEG <- merge(BT37_DEG, gene_symbols, by.x = "Ensembl", by.y = "ensembl_gene_id", all.x = TRUE)
+#rownames(BT37_DEG) <- BT37_DEG$Ensembl
+#BT37_DEG$`row.names` <- NULL
+
+```
+
+```{r}
+write.csv(BT37_DEG, 
+          file="DEG_p05_BT37.csv")
+```
+
+
+```{r}
+CHO6_DEG$Ensembl <- rownames(CHO6_DEG)
+CHO6_DEG$Ensembl <- sub("\\..*", "", CHO6_DEG$Ensembl)
+
+# Extract Ensembl IDs from row names of your data frame
+ensembl_ids <- CHO6_DEG$Ensembl
+
+# Get gene symbols for Ensembl IDs
+gene_symbols <- getBM(attributes = c("ensembl_gene_id", "external_gene_name"),
+                      filters = "ensembl_gene_id", 
+                      values = ensembl_ids, 
+                      mart = ensembl)
+
+# Rename columns for clarity
+colnames(gene_symbols) <- c("ensembl_gene_id", "geneSymbol")
+
+# Merge gene symbols with original data
+CHO6_DEG <- merge(CHO6_DEG, gene_symbols, by.x = "Ensembl", by.y = "ensembl_gene_id", all.x = TRUE)
+#rownames(CHO6_DEG) <- CHO6_DEG$Ensembl
+#CHO6_DEG$`row.names` <- NULL
+
+```
+
+```{r}
+write.csv(CHO6_DEG, 
+          file="DEG_p05_CHO6.csv")
+```
+
+```{r}
+# Convert row names to a column
+CHO6_DEG_log2FC <- CHO6_DEG  %>% rename(CHO6_Log2FC = log2FoldChange) %>% filter(padj < 0.05, (abs(CHO6_Log2FC)) > 2) %>% dplyr::select(geneSymbol, Ensembl, CHO6_Log2FC)
+BT37_DEG_log2FC <- BT37_DEG  %>% rename(BT37_Log2FC = log2FoldChange) %>% filter(padj < 0.05, (abs(BT37_Log2FC)) > 2) %>% dplyr::select(geneSymbol,Ensembl, BT37_Log2FC )
+
+# Perform inner join based on row names
+ATRT_DEG <- inner_join(CHO6_DEG_log2FC, BT37_DEG_log2FC, by = "Ensembl")%>% distinct()
+
+ATRT_DEG_heatmap <- ATRT_DEG %>% dplyr::select(geneSymbol.x, BT37_Log2FC, CHO6_Log2FC)
+```
+
+```{r}
+
+# Define color palette with 100 colors
+colors <- colorRampPalette(c("blue", "white", "red"))(100)
+
+# Calculate breaks for the color scale
+breaks <- seq(-3, 8, length.out = 101)  # Adjust as needed
+
+# Create heatmap
+pheatmap(ATRT_DEG_heatmap[, -1],  # Exclude the first column (Geneid)
+         color = colors,  # Color palette
+         breaks = breaks,  # Specify breaks for color scale
+         cluster_rows = TRUE,  # Do not cluster rows
+         cluster_cols = FALSE,
+         name = "Log2FC"
+         #annotation_col = ATRT_DEG[, 1],  # Use the first column as column annotation
+         #annotation_names_col = FALSE,  # Do not show column names for annotation
+         #display_numbers = TRUE,  # Display numerical values in cells
+         #fontsize = 8,  # Font size
+         #main = "Heatmap of Log2FC"  # Title of the heatmap
+)
+
+```
+```{r}
+ATRT_DEG_heatmap_rows <- ATRT_DEG_heatmap
+rownames(ATRT_DEG_heatmap_rows) <- ATRT_DEG_heatmap_rows[,1]
+ATRT_DEG_heatmap_rows <- ATRT_DEG_heatmap_rows[,-1]
+
+ATRT_DEG_heatmap_rows <- ATRT_DEG_heatmap_rows %>% 
+  # transpose the matrix so genes are as columns
+  t() %>% 
+  # apply scalling to each column of the matrix (genes)
+  scale() %>% 
+  # transpose back so genes are as rows again
+  t()
+```
+
+
+```{r}
+#install.packages("eulerr")
+library(eulerr)
+```
+
+```{r}
+install.packages("VennDiagram")
+library(VennDiagram)
+```
+
+```{r}
+BT37_DEG_log2FC_UP <- BT37_DEG_log2FC %>% filter(BT37_Log2FC > 2)
+CHO6_DEG_log2FC_UP <- CHO6_DEG_log2FC %>% filter(CHO6_Log2FC > 2)
+
+BT37 <- BT37_DEG_log2FC_UP$Ensembl
+CHO6 <- CHO6_DEG_log2FC_UP$Ensembl
+
+# Create a list of sets
+sets_list <- list(
+  BT37_DEGS = BT37,
+  CHO6_DEGS = CHO6
+)
+
+venn.diagram(
+  x = sets_list,
+  category.names = c("BT37" , "CHLA06"),
+  filename = 'ATRT_UP.png',
+  output=TRUE
+)
+```
+
+
+```{r}
+ATRT_venn <- euler(c(BT37 = 615, CHLA06 = 678, 
+                "BT37&CHLA06" = 261))
+ATRT_venndiagram <- plot(ATRT_venn, quantities = TRUE, fill = c("cornsilk", "cornflowerblue"))
+ATRT_venndiagram
+```
+```{r}
+pdf(file="ATRT_venndiagram.pdf", width = 4, height = 4)
+ATRT_venndiagram
+dev.off()
+```
+
+
+#Processing and visualization
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(ggplot2)
+library(clusterProfiler)
+library(enrichplot)
+```
+
+```{r}
+DEG_BT37 <- read.csv("/Users/rjfisher/Downloads/DEG_p05_lf2_BT37.csv")
+```
+
+```{r}
+DEG_BT37$geneSymbol<-gsub("\\..*$", "", DEG_BT37$geneSymbol)
+```
+
+```{r}
+library(biomaRt)
+library(dplyr)
+
+# Define a function to convert Ensembl IDs to gene symbols
+convert_ensembl_to_genesymbol <- function(ensembl_ids) {
+    ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+    result <- getBM(attributes = c('ensembl_gene_id', 'hgnc_symbol'), 
+                    filters = 'ensembl_gene_id', 
+                    values = ensembl_ids, 
+                    mart = ensembl)
+    gene_symbols <- result$hgnc_symbol
+    names(gene_symbols) <- result$ensembl_gene_id
+    return(gene_symbols)
+}
+```
+
+
+```{r}
+# Convert Ensembl IDs to gene symbols
+ensembl_ids <- DEG_BT37$geneSymbol
+gene_IDs <- convert_ensembl_to_genesymbol(ensembl_ids)
+
+# Map gene symbols back to the data frame
+DEG_BT37$gene_IDs <- gene_IDs[DEG_BT37$geneSymbol]
+
+# Print the updated data frame
+print(DEG_BT37)
+
+```
+
+#GO Analysis 
+```{r}
+gontology_DEG_BT37 <- enrichGO(DEG_BT37$gene_IDs, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "all", pvalueCutoff = 0.05, pAdjustMethod = "BH", qvalueCutoff = 0.05, minGSSize = 10, maxGSSize = 500, readable = FALSE)
+```
+
+```{r}
+gontology_BT37_dotplot<-dotplot(gontology_DEG_BT37, split="ONTOLOGY", title = "GO: BT37 DMSO vs Corin", label_format=75) + facet_grid(ONTOLOGY~., scale="free")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+gontology_BT37_dotplot
+```
+```{r}
+pdf(file="gontology_BT37_dotplot.pdf", width = 7.5, height = 6)
+gontology_BT37_dotplot
+dev.off()
+```
+
+```{r}
+# Create volcano plot
+library(ggplot2)
+library(ggrepel)
+volcano_BT37 <- ggplot(DEG_BT37, aes(x = log2FoldChange, y = -log10(padj))) +
+  geom_point(aes(color = ifelse(padj < 0.05 & abs(log2FoldChange) > 2, 
+                                 ifelse(log2FoldChange > 2, "blue", "grey"), 
+                                 "red")), size = 1) +
+  scale_color_manual(values = c("red", "blue", "grey"), guide = "none") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey") +
+  geom_vline(xintercept = c(-2, 2), linetype = "dashed", color = "grey") +
+  #geom_label_repel(aes(label = rownames(BT37_DEG)), box.padding = 0.5) +  # Label with row names
+  labs(title = "BT37 DEGs", x = "Log2FC", y = "-Log10(padj)") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+volcano_BT37
+```
+
+
+
+```{r}
+DEG_CHO6 <- read.csv("/Users/rjfisher/Downloads/DEG_p05_lf2_CHO6.csv")
+```
+
+```{r}
+DEG_CHO6$geneSymbol<-gsub("\\..*$", "", DEG_CHO6$geneSymbol)
+```
+
+```{r}
+library(biomaRt)
+library(dplyr)
+
+# Define a function to convert Ensembl IDs to gene symbols
+convert_ensembl_to_genesymbol <- function(ensembl_ids) {
+    ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+    result <- getBM(attributes = c('ensembl_gene_id', 'hgnc_symbol'), 
+                    filters = 'ensembl_gene_id', 
+                    values = ensembl_ids, 
+                    mart = ensembl)
+    gene_symbols <- result$hgnc_symbol
+    names(gene_symbols) <- result$ensembl_gene_id
+    return(gene_symbols)
+}
+```
+
+
+```{r}
+# Convert Ensembl IDs to gene symbols
+ensembl_ids <- DEG_CHO6$geneSymbol
+gene_IDs <- convert_ensembl_to_genesymbol(ensembl_ids)
+
+# Map gene symbols back to the data frame
+DEG_CHO6$gene_IDs <- gene_IDs[DEG_CHO6$geneSymbol]
+
+# Print the updated data frame
+print(DEG_CHO6)
+
+```
+
+
+#GO Analysis 
+```{r}
+gontology_DEG_CHO6 <- enrichGO(DEG_CHO6$gene_IDs, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "all", pvalueCutoff = 0.05, pAdjustMethod = "BH", qvalueCutoff = 0.05, minGSSize = 10, maxGSSize = 500, readable = FALSE)
+```
+
+```{r}
+gontology_CHO6_dotplot<-dotplot(gontology_DEG_CHO6, split="ONTOLOGY", title = "GO: CHLA06 DMSO vs Corin", label_format=75) + facet_grid(ONTOLOGY~., scale="free")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+gontology_CHO6_dotplot
+```
+
+```{r}
+pdf(file="gontology_CHLA06_dotplot.pdf", width = 7.5, height = 6)
+gontology_CHO6_dotplot
+dev.off()
+```
+
+```{r}
+CHO6_GO_list <- gontology_DEG_CHO6@result
+```
+
+```{r}
+BT37_GO_list <- gontology_DEG_BT37@result
+```
+
+```{r}
+write.csv(CHO6_GO_list, file = "CHLA06_GO_list.csv")
+write.csv(BT37_GO_list, file = "BT37_GO_list.csv")
+
+```
+
+```{r}
+DEG_BT37_UP <- DEG_BT37 %>% filter(log2FoldChange>2, padj < 0.05)
+DEG_CHO6_UP <- DEG_CHO6 %>% filter(log2FoldChange>2, padj < 0.05)
+
+overlap <- inner_join(DEG_CHO6_UP, DEG_BT37_UP, by = "geneSymbol")
+
+```
+
+```{r}
+gontology_overlap <- enrichGO(overlap$gene_IDs.x, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "all", pvalueCutoff = 0.05, pAdjustMethod = "BH", qvalueCutoff = 0.05, minGSSize = 10, maxGSSize = 500, readable = FALSE)
+```
+
+```{r}
+options(enrichplot.colours = c("red","blue"))
+gontology_overlap_dotplot<-dotplot(gontology_overlap, split="ONTOLOGY", title = "GO: Common Upregulated", label_format=75) + facet_grid(ONTOLOGY~., scale="free")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+gontology_overlap_dotplot
+```
+```{r}
+pdf(file="gontology_common_up_dotplot.pdf", width = 7.5, height = 6)
+gontology_overlap_dotplot
+dev.off()
+```
+```{r}
+overlap_table <- gontology_overlap@result
+```
+
+
+
+```{r}
+zscored_df <- read.csv("/Users/rjfisher/Downloads/zscored_df_vst.csv")
+```
+
+```{r}
+# Connect to the Ensembl database
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+```
+
+```{r}
+zscored_df$Ensembl <- sub("\\..*", "", zscored_df$Ensembl)
+
+# Extract Ensembl IDs from row names of your data frame
+ensembl_ids <- zscored_df$Ensembl
+
+# Get gene symbols for Ensembl IDs
+gene_symbols <- getBM(attributes = c("ensembl_gene_id", "external_gene_name"),
+                      filters = "ensembl_gene_id", 
+                      values = ensembl_ids, 
+                      mart = ensembl)
+
+# Rename columns for clarity
+colnames(gene_symbols) <- c("ensembl_gene_id", "geneSymbol")
+
+# Merge gene symbols with original data
+zscored_df <- merge(zscored_df, gene_symbols, by.x = "Ensembl", by.y = "ensembl_gene_id", all.x = TRUE)
+#rownames(zscored_df) <- zscored_df$Ensembl
+#zscored_df$`row.names` <- NULL
+```
+
+```{r}
+zscored_df <- zscored_df[!is.na(zscored_df$geneSymbol) & zscored_df$geneSymbol != "", ]
+```
+
+```{r}
+zscored_df <- zscored_df [,-c(2, 15, 16)]
+colnames(zscored_df) <- c("Ensembl", "BT37_DMSO_1", "BT37_DMSO_2", "BT37_DMSO_3",
+                      "BT37_Corin_1", "BT37_Corin_2", "BT37_Corin_3",
+                      "CHLA06_DMSO_1", "CHLA06_DMSO_2", "CHLA06_DMSO_3",
+                      "CHLA06_Corin_1", "CHLA06_Corin_2", "CHLA06_Corin_3")
+```
+
+```{r}
+
+set.seed(123)  # Set seed for reproducibility
+k <- 3  # Number of clusters
+zscored_matrix <- as.matrix(zscored_df[,-1])  # Exclude Ensembl column
+
+kmeans_result <- kmeans(zscored_matrix, centers = k)
+clusters <- kmeans_result$cluster
+
+# Add cluster information to the data frame
+zscored_df$Cluster <- as.factor(clusters)
+```
+
+```{r}
+# Define the color scale for the heatmap
+col_fun <- colorRamp2(c(-2, 0, 2.5), c("blue", "white", "red"))
+
+# Define breaks for legend
+breaks <- seq(-2, 2.5, by = 0.5)
+
+# Create the heatmap with cluster information
+heatmap <- Heatmap(zscored_matrix, 
+                   name = "Z-score",
+                   col = col_fun,
+                   show_row_names = FALSE,
+                   cluster_rows = TRUE,
+                   cluster_columns = FALSE,
+                   #row_km = k,
+                   row_split = clusters,
+                   border = TRUE,
+                   heatmap_legend_param = list(at = breaks, title = "Z-score"))
+
+# Draw the heatmap
+draw(heatmap)
+
+
+```
+```{r}
+pdf(file="kmean_heatmap.pdf", width = 4, height = 6)
+heatmap
+dev.off()
+```
+
+
+```{r}
+zscored_df_cluster1 <- zscored_df %>% filter(Cluster == 1)
+
+gontology_overlap_cluster1 <- enrichGO(zscored_df_cluster1$geneSymbol, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "all", pvalueCutoff = 0.05, pAdjustMethod = "BH", qvalueCutoff = 0.05, minGSSize = 10, maxGSSize = 500, readable = FALSE)
+
+options(enrichplot.colours = c("red","blue"))
+gontology_overlap_dotplot_cluster1<-dotplot(gontology_overlap_cluster1, split="ONTOLOGY", title = "GO: BT37-Specific Upregulation", label_format=75) + facet_grid(ONTOLOGY~., scale="free")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+gontology_overlap_dotplot_cluster1
+```
+
+```{r}
+zscored_df_cluster3 <- zscored_df %>% filter(Cluster == 3)
+
+
+gontology_overlap_cluster3 <- enrichGO(zscored_df_cluster3$geneSymbol, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "all", pvalueCutoff = 0.05, pAdjustMethod = "BH", qvalueCutoff = 0.05, minGSSize = 10, maxGSSize = 500, readable = FALSE)
+
+options(enrichplot.colours = c("red","blue"))
+gontology_overlap_dotplot_cluster3<-dotplot(gontology_overlap_cluster3, split="ONTOLOGY", title = "GO: Common Upregulation", label_format=75) + facet_grid(ONTOLOGY~., scale="free")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+gontology_overlap_dotplot_cluster3
+```
+
+```{r}
+go_results <- gontology_overlap_cluster3@result
+```
+
+```{r}
+write.csv(go_results, file = "go_results_cluster3.csv")
+```
+
+```{r}
+pdf(file="gontology_common_up_dotplot.pdf", width = 7.5, height = 6)
+gontology_overlap_dotplot_cluster3
+dev.off()
+```
+
+```{r}
+zscored_df_cluster2 <- zscored_df %>% filter(Cluster == 2)
+
+
+gontology_overlap_cluster2 <- enrichGO(zscored_df_cluster2$geneSymbol, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "all", pvalueCutoff = 0.05, pAdjustMethod = "BH", qvalueCutoff = 0.05, minGSSize = 10, maxGSSize = 500, readable = FALSE)
+
+options(enrichplot.colours = c("red","blue"))
+gontology_overlap_dotplot_cluster2<-dotplot(gontology_overlap_cluster2, split="ONTOLOGY", title = "GO: CHLA06-Specific Upregulation", label_format=75) + facet_grid(ONTOLOGY~., scale="free")+
+  theme(plot.title = element_text(hjust = 0.5,face="bold"))
+gontology_overlap_dotplot_cluster2
+```
+
+
+
+#Make differentiation heatmap
+```{r}
+CHO6_DEG <- read.csv("/Users/rjfisher/Library/Mobile Documents/com~apple~CloudDocs/BUSM/Alani Lab/DATA/CoREST Splicing/ATRT/DEG_salmon/DEG_p05_CHO6.csv")
+BT37_DEG <- read.csv("/Users/rjfisher/Library/Mobile Documents/com~apple~CloudDocs/BUSM/Alani Lab/DATA/CoREST Splicing/ATRT/DEG_salmon/DEG_p05_BT37.csv")
+```
+
+```{r}
+BT37_DEG$Ensembl <- sub("\\..*", "", BT37_DEG$Ensembl)
+
+# Extract Ensembl IDs from row names of your data frame
+ensembl_ids <- BT37_DEG$Ensembl
+
+# Get gene symbols for Ensembl IDs
+gene_symbols <- getBM(attributes = c("ensembl_gene_id", "external_gene_name"),
+                      filters = "ensembl_gene_id", 
+                      values = ensembl_ids, 
+                      mart = ensembl)
+
+# Rename columns for clarity
+colnames(gene_symbols) <- c("ensembl_gene_id", "geneSymbol")
+
+# Merge gene symbols with original data
+BT37_DEG <- merge(BT37_DEG, gene_symbols, by.x = "Ensembl", by.y = "ensembl_gene_id", all.x = TRUE)
+
+BT37_DEG <- BT37_DEG %>% filter(geneSymbol != "")
+```
+
+```{r}
+CHO6_DEG$Ensembl <- sub("\\..*", "", CHO6_DEG$Ensembl)
+
+# Extract Ensembl IDs from row names of your data frame
+ensembl_ids <- CHO6_DEG$Ensembl
+
+# Get gene symbols for Ensembl IDs
+gene_symbols <- getBM(attributes = c("ensembl_gene_id", "external_gene_name"),
+                      filters = "ensembl_gene_id", 
+                      values = ensembl_ids, 
+                      mart = ensembl)
+
+# Rename columns for clarity
+colnames(gene_symbols) <- c("ensembl_gene_id", "geneSymbol")
+
+# Merge gene symbols with original data
+CHO6_DEG <- merge(CHO6_DEG, gene_symbols, by.x = "Ensembl", by.y = "ensembl_gene_id", all.x = TRUE)
+
+CHO6_DEG <- CHO6_DEG %>% filter(geneSymbol != "")
+
+
+```
+
+
+
+```{r}
+# Filter for the pathway of interest
+neuronal_genes <- go_results %>%
+  filter(Description == "regulation of neuron projection development") %>%
+  dplyr::select(geneID)
+
+# Extract and split the genes into a vector
+genes <- unlist(strsplit(as.character(neuronal_genes$geneID), "/"))
+
+```
+
+```{r}
+CHO6_DEG <- CHO6_DEG %>% dplyr::select(geneSymbol, log2FoldChange) %>% rename(CHLA06 = log2FoldChange)
+BT37_DEG <- BT37_DEG %>% dplyr::select(geneSymbol, log2FoldChange) %>% rename(BT37 = log2FoldChange)
+
+DEG_ATRT <- inner_join(CHO6_DEG, BT37_DEG, by = "geneSymbol")
+```
+
+```{r}
+DEG_ATRT_neuronal <- DEG_ATRT %>% filter(geneSymbol %in% genes)
+rownames(DEG_ATRT_neuronal) <- DEG_ATRT_neuronal[,1]
+DEG_ATRT_neuronal <- DEG_ATRT_neuronal[,-1]
+```
+
+```{r}
+col_fun = colorRamp2(c(0, 6), c("white", "red"))
+
+neuron_heatmap <- Heatmap(DEG_ATRT_neuronal, name = "Log2FC", col = col_fun, border = T, show_row_names = T, column_title = "GO: Regulation of Neuron Projection Development", cluster_columns = F)
+neuron_heatmap
+```
+```{r}
+pdf(file="gontology_neuron.pdf", width = 4, height = 5)
+neuron_heatmap
+dev.off()
+```
+
+
+#overlap differentiation genes with Erkek gene list (SMARCB1 targets repressed in ATRT)
+```{r}
+Erkek <- read.csv("/Users/rjfisher/Library/Mobile Documents/com~apple~CloudDocs/BUSM/Alani Lab/DATA/CoREST Splicing/ATRT/DEG_salmon/Erkek_geneset.csv")
+```
+
+```{r}
+DEG_ATRT_neuronal$geneSymbol <- rownames(DEG_ATRT_neuronal)
+Erkek_neuronal <- inner_join(Erkek, DEG_ATRT_neuronal, by = "geneSymbol")
+```
+
+#Identifying ChIP candidates
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(biomaRt)
+```
+
+#import in Redone RNAseq ChIP candidates
+```{r}
+CHLAO6_candidates <- read.delim("/Users/rjfisher/Downloads/CHLA06_ChIP_candidates.bed", header = F)
+BT37_candidates <- read.delim("/Users/rjfisher/Downloads/BT37_ChIP_candidates.bed", header = F)
+Both_candidates <- read.delim("/Users/rjfisher/Downloads/ChIP_candidates_both.bed", header = F)
+```
+
+```{r}
+CHLAO6_candidates$V4 <- gsub("\\.\\d+;", "", CHLAO6_candidates$V4)
+BT37_candidates$V4 <- gsub("\\.\\d+;", "", BT37_candidates$V4)
+Both_candidates$V4 <- gsub("\\.\\d+;", "", Both_candidates$V4)
+```
+
+
+```{r}
+# Connect to the Ensembl database
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+```
+
+```{r}
+# Extract Ensembl IDs from row names of your data frame
+ensembl_ids <- CHLAO6_candidates$V4
+
+# Get gene symbols for Ensembl IDs
+gene_symbols <- getBM(attributes = c("ensembl_gene_id", "external_gene_name"),
+                      filters = "ensembl_gene_id", 
+                      values = ensembl_ids, 
+                      mart = ensembl)
+
+# Rename columns for clarity
+colnames(gene_symbols) <- c("ensembl_gene_id", "geneSymbol")
+
+# Merge gene symbols with original data
+CHLAO6_candidates <- merge(CHLAO6_candidates, gene_symbols, by.x = "V4", by.y = "ensembl_gene_id", all.x = TRUE)
+```
+
+```{r}
+# Extract Ensembl IDs from row names of your data frame
+ensembl_ids <- BT37_candidates$V4
+
+# Get gene symbols for Ensembl IDs
+gene_symbols <- getBM(attributes = c("ensembl_gene_id", "external_gene_name"),
+                      filters = "ensembl_gene_id", 
+                      values = ensembl_ids, 
+                      mart = ensembl)
+
+# Rename columns for clarity
+colnames(gene_symbols) <- c("ensembl_gene_id", "geneSymbol")
+
+# Merge gene symbols with original data
+BT37_candidates <- merge(BT37_candidates, gene_symbols, by.x = "V4", by.y = "ensembl_gene_id", all.x = TRUE)
+```
+
+```{r}
+# Extract Ensembl IDs from row names of your data frame
+ensembl_ids <- Both_candidates$V4
+
+# Get gene symbols for Ensembl IDs
+gene_symbols <- getBM(attributes = c("ensembl_gene_id", "external_gene_name"),
+                      filters = "ensembl_gene_id", 
+                      values = ensembl_ids, 
+                      mart = ensembl)
+
+# Rename columns for clarity
+colnames(gene_symbols) <- c("ensembl_gene_id", "geneSymbol")
+
+# Merge gene symbols with original data
+Both_candidates <- merge(Both_candidates, gene_symbols, by.x = "V4", by.y = "ensembl_gene_id", all.x = TRUE)
+```
+
+#merge BT37 and CHLA06 with DEG data so we can rank based on most significant up
+```{r}
+BT37_DEG <- read.csv("/Users/rjfisher/Library/Mobile Documents/com~apple~CloudDocs/BUSM/Alani Lab/DATA/CoREST Splicing/ATRT/DEG_salmon/DEG_p05_lf2_BT37.csv")
+
+CHLA06_DEG <- read.csv("/Users/rjfisher/Library/Mobile Documents/com~apple~CloudDocs/BUSM/Alani Lab/DATA/CoREST Splicing/ATRT/DEG_salmon/DEG_p05_lf2_CHO6.csv")
+
+BT37_DEG <- BT37_DEG[,-1]
+CHLA06_DEG <- CHLA06_DEG[,-1]
+```
+
+```{r}
+CHLAO6_candidates <- CHLAO6_candidates %>% dplyr::rename(Ensembl = "V4", Chr = "V1", promoter_start = "V2", promoter_end = "V3", strand = "V5") %>% dplyr::select(geneSymbol, Chr, promoter_start, promoter_end, strand)
+
+BT37_candidates <- BT37_candidates %>% dplyr::rename(Ensembl = "V4", Chr = "V1", promoter_start = "V2", promoter_end = "V3", strand = "V5") %>% dplyr::select(geneSymbol, Chr, promoter_start, promoter_end, strand)
+
+Both_candidates <- Both_candidates %>% dplyr::rename(Ensembl = "V4", Chr = "V1", promoter_start = "V2", promoter_end = "V3", strand = "V5") %>% dplyr::select(geneSymbol, Chr, promoter_start, promoter_end, strand)
+```
+
+```{r}
+CHLAO6_candidates_expression <- inner_join(CHLAO6_candidates, CHLA06_DEG, by = "geneSymbol")
+
+BT37_candidates_expression <- inner_join(BT37_candidates, BT37_DEG, by = "geneSymbol")
+
+```
+
+```{r}
+write.csv(CHLAO6_candidates_expression, file = "CHLAO6_candidates_expression.csv")
+write.csv(BT37_candidates_expression, file = "BT37_candidates_expression.csv")
+write.csv(Both_candidates, file = "Both_candidates_expression.csv")
+```
 
 
 
