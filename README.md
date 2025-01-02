@@ -9,8 +9,6 @@
 
   - <ins>Conclusion</ins> The CoREST inhibitor, corin, suppresses tumor growth, induces differentiation, and promotes apoptosis in ATRT, leading to significantly increased survival of mice bearing ATRT orthotopic xenografts. Our results suggest a potential application of CoREST complex inhibitors in patients with ATRT.
 
-![image](https://github.com/user-attachments/assets/e0e27f81-a3bf-4e80-86a2-80011675dfb6)
-
 ### Repository Contributors:
   - Robert Fisher
   - Samuel Beck
