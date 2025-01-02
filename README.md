@@ -1,7 +1,7 @@
 # The CoREST complex inhibitor, corin, leads to decreased tumor growth, increased cellular differentiation and extended lifespan in atypical teratoid rhabdoid tumor xenograft models
 
 ### Abstract:
-  - Background Atypical teratoid rhabdoid tumor (ATRT) is the most common malignant brain tumor in infants, and more than 60% of children with ATRT die from their tumor. ATRT is associated with mutational inactivation/deletion of SMARCB1, a member of the SWI/SNF chromatin remodeling complex, suggesting that epigenetic events play a critical role in tumor development and progression. Moreover, disruption of SWI/SNF allows unopposed activity of epigenetic repressors, which contribute to tumorigenicity. We therefore explored the role of the CoREST repressor complex in ATRT.
+  - <ins>Background</ins> : Atypical teratoid rhabdoid tumor (ATRT) is the most common malignant brain tumor in infants, and more than 60% of children with ATRT die from their tumor. ATRT is associated with mutational inactivation/deletion of SMARCB1, a member of the SWI/SNF chromatin remodeling complex, suggesting that epigenetic events play a critical role in tumor development and progression. Moreover, disruption of SWI/SNF allows unopposed activity of epigenetic repressors, which contribute to tumorigenicity. We therefore explored the role of the CoREST repressor complex in ATRT.
 
   - Methods We evaluated the effects of the bifunctional LSD1/HDAC1/2 small molecule CoREST inhibitor, corin, on ATRT tumor cell growth, apoptosis, differentiation, gene expression and chromatin accessibility.
 
